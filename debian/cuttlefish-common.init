@@ -32,38 +32,29 @@
 
 num_cvd_accounts=8
 
-# Creates a pair of bridge and tap interfaces
 create_interface() {
-    bridge="$(printf cvd-${1}br-%02d $2)"
     tap="$(printf cvd-${1}tap-%02d $2)"
     gateway="${3}.$((4*$2 - 3))"
     network="${3}.$((4*$2 - 4))/30"
     netmask="255.255.255.252"
     dhcp_range="${3}.$((4*$2 - 2)),${3}.$((4*$2 - 2))"
-
-    /sbin/brctl addbr "${bridge}"
-    /sbin/brctl stp "${bridge}" off
-    /sbin/brctl setfd "${bridge}" 0
-    ip -4 addr add ${gateway}/30 broadcast + dev "${bridge}"
-    ip link set dev ${bridge} up
+    ip tuntap add dev "${tap}" mode tap group cvdnetwork
+    ip -4 addr add ${gateway}/30 broadcast + dev "${tap}"
+    ip link set dev ${tap} up
 
     /sbin/iptables -t nat -A POSTROUTING -s "${network}" -j MASQUERADE
 
     /usr/sbin/dnsmasq \
     --strict-order \
     --except-interface=lo \
-    --interface="${bridge}" \
+    --interface="${tap}" \
     --listen-address="${gateway}" \
     --bind-interfaces \
     --dhcp-range="${dhcp_range}" \
     --conf-file="" \
-    --pid-file=/var/run/cuttlefish-dnsmasq-"${bridge}".pid \
-    --dhcp-leasefile=/var/run/cuttlefish-dnsmasq-"${bridge}".leases \
+    --pid-file=/var/run/cuttlefish-dnsmasq-"${tap}".pid \
+    --dhcp-leasefile=/var/run/cuttlefish-dnsmasq-"${tap}".leases \
     --dhcp-no-override
-
-    ip tuntap add dev "${tap}" mode tap group cvdnetwork
-    ip link set dev "${tap}" up
-    /sbin/brctl addif "${bridge}" "${tap}"
 }
 
 create_interfaces(){
@@ -72,21 +63,16 @@ create_interfaces(){
 }
 
 destroy_interface() {
-    bridge="$(printf cvd-${1}br-%02d $2)"
     tap="$(printf cvd-${1}tap-%02d $2)"
     network="${3}.$((4*$2 - 4))/30"
 
-    ip link set dev "${tap}" down
-    ip link delete "${tap}"
-
-    if [ -f /var/run/cuttlefish-dnsmasq-"${bridge}".pid ]; then
-        kill $(cat /var/run/cuttlefish-dnsmasq-"${bridge}".pid)
+    if [ -f /var/run/cuttlefish-dnsmasq-"${tap}".pid ]; then
+        kill $(cat /var/run/cuttlefish-dnsmasq-"${tap}".pid)
     fi
 
     iptables -t nat -D POSTROUTING -s "${network}" -j MASQUERADE
-
-    ip link set dev "${bridge}" down
-    /sbin/brctl delbr "${bridge}"
+    ip link set dev "${tap}" down
+    ip link delete "${tap}"
 }
 
 destroy_interfaces(){
