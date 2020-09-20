@@ -109,6 +109,57 @@ function is_absolute_path {
 	return 1
 }
 
+#
+#$1: the unique id of the container: e.g. $(cvd_allocate_instance_id)
+#
+#$2: list of info strings for the service port(s)
+# each string will be delimited by ','
+# here are the field in the string, in order
+#
+#  f1: base port number if the server runs on the host natively alone
+#  f2: maximum number of cuttlefish instance inside the given container
+#  f3: # of ports per each cuttlefish instance
+#    - VNC wants 1, WebRTC may wants more
+#  f4: actual # of ports to be assigned for the service to the container
+#  f5: protocol such as udp
+#
+# except f1, all others could be "", which falls for the default values:
+#
+#  f2: knCfPerContainer == 8, which is the # of instances launch_cvd allows
+#  f3: 1
+#  f4: f2 * f3, f4 <= f2*f3 must hold
+#  f5: "" is passed to docker run
+#
+#$3: array to add the processed docker run (range) port binding options
+#
+function add_port_binding {
+    local cf_id=$1
+    local -n records=$2
+    local -n result=$3
+    local knCfPerContainer=8
+
+    for record in "${records[@]}"; do
+        local guest_base="$(echo $record | cut -d ',' -f 1)"
+        local host_base=$guest_base
+        local max_n_cf="$(echo $record | cut -d ',' -f 2)"
+        [[ -z $max_n_cf ]] && max_n_cf=$((knCfPerContainer))
+        local n_ports_per_cf="$(echo $record | cut -d ',' -f 3)"
+        [[ -z $n_ports_per_cf ]] && n_ports_per_cf="1"
+        local n_ports="$(echo $record | cut -d ',' -f 4)"
+        [[ -z $n_ports ]] && n_ports=$((max_n_cf * n_ports_per_cf))
+        local protocol="$(echo $record | cut -d ',' -f 5)"
+
+        local host_start=$((host_base + max_n_cf * n_ports_per_cf * cf_id))
+        local guest_start=$((guest_base))
+        local host_end=$((host_start + n_ports -1))
+        local guest_end=$((guest_start + n_ports -1))
+
+        local output="$host_start-$host_end:$guest_start-$guest_end"
+        [[ -n $protocol ]] && output=$output"/$protocol"
+
+        result+=("-p" "$output")
+    done
+}
 
 singleshot="false"
 
@@ -278,27 +329,26 @@ function cvd_docker_create {
 	    fi
 
         local cf_instance=$(cvd_allocate_instance_id)
-        if [ "${cf_instance}" -gt 7 ]; then
-                echo "Limit is maximum 8 Cuttlefish instances."
+        local kN_MAX_CONTAINERS=8
+        if [ "${cf_instance}" -gt $((kN_MAX_CONTAINERS - 1)) ]; then
+                echo "Limit is maximum $kN_MAX_CONTAINERS Cuttlefish instances."
                 return
         fi
 
         echo "Starting container ${name} (id ${cf_instance}) from image cuttlefish.";
+
+        # read the comments on add_port_binding
+        local -a ports_w_size=("6443,,,," "8443,,,," "6250,,,,")
+        local -a port_parms=()
+
+        # regardless of # of cf instances inside the container,
+        # we should assign 8 ports for webRTC per container
+        ports_w_size+=("15550,8,8,8,tcp" "15550,8,8,8,udp")
+        add_port_binding $cf_instance ports_w_size port_parms
+
 	    docker run -d ${as_host_x[@]} \
 		        --name "${name}" -h "${name}" \
-                -l "cf_instance=${cf_instance}" \
-                -e CUTTLEFISH_INSTANCE="${cf_instance}" \
-                -p $((6443+cf_instance)):$((6443+cf_instance)) \
-                -p $((8443+cf_instance)):$((8443+cf_instance)) \
-                -p $((6250+cf_instance)):$((6250+cf_instance)) \
-                -p $((15550+cf_instance*4)):$((15550+cf_instance*4))/tcp \
-                -p $((15551+cf_instance*4)):$((15551+cf_instance*4))/tcp \
-                -p $((15552+cf_instance*4)):$((15552+cf_instance*4))/tcp \
-                -p $((15553+cf_instance*4)):$((15553+cf_instance*4))/tcp \
-                -p $((15550+cf_instance*4)):$((15550+cf_instance*4))/udp \
-                -p $((15551+cf_instance*4)):$((15551+cf_instance*4))/udp \
-                -p $((15552+cf_instance*4)):$((15552+cf_instance*4))/udp \
-                -p $((15553+cf_instance*4)):$((15553+cf_instance*4))/udp \
+                -l "cf_instance=${cf_instance}" "${port_parms[@]}" \
 		        --privileged \
 		        -v /sys/fs/cgroup:/sys/fs/cgroup:ro ${volumes[@]} \
 		        cuttlefish
