@@ -24,7 +24,7 @@ function cvd_get_ip {
 	local name="$(cvd_container_exists $1)"
 	[[ -n "${name}" ]] && \
 		echo $(docker inspect --format='{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "${name}")
-	}
+}
 
 function cvd_allocate_instance_id {
 	local -a ids=()
