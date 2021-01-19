@@ -217,7 +217,7 @@ cvd_start_cf --norun_adb_connector --start_webrtc --cpus 4 --memory_mb 4096
 Following that, open a(nother) terminal, and type:
 
 ```bash
-adb connect ip_cf1:6520
+adb connect $ip_cf1:6520
 ```
 
 Once done, you stop cuttlefish as follows (in a new terminal)
